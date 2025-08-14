@@ -10,6 +10,7 @@ use encoding_rs::Encoding;
 use env_logger;
 use log::info;
 use std::collections::BTreeSet;
+use std::env;
 
 /// バイト列を推定デコードして UTF-8 文字列に
 fn decode_to_utf8(bytes: &[u8]) -> String {
@@ -301,9 +302,21 @@ async fn api_convert(mut payload: Multipart) -> Result<HttpResponse, Error> {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Initialize logger
     env_logger::init();
+
+    // Determine host and port for Render compatibility
+    let port: u16 = env::var("PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8080);
+    let host = "0.0.0.0";
+    info!("Server running at http://{}:{}", host, port);
+
+    // Load Tera templates
     let tera = Tera::new("templates/**/*").expect("テンプレート読み込み失敗");
-    info!("Server running at http://127.0.0.1:8080");
+
+    // Start HTTP server
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
@@ -311,7 +324,7 @@ async fn main() -> std::io::Result<()> {
             .service(index)
             .service(api_convert)
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind((host, port))?
     .run()
     .await
 }
