@@ -9,6 +9,7 @@ use chardetng::EncodingDetector;
 use encoding_rs::Encoding;
 use env_logger;
 use log::info;
+use std::env;
 
 /// バイト列を推定デコードして UTF-8 文字列に
 fn decode_to_utf8(bytes: &[u8]) -> String {
@@ -22,19 +23,16 @@ fn decode_to_utf8(bytes: &[u8]) -> String {
 /// Multipart からフォーム値を取り出す
 async fn parse_multipart(
     payload: &mut Multipart,
-) -> Result<
-    (
-        String,      // mode
-        Vec<u8>,     // file bytes
-        String,      // primary_key
-        Vec<String>, // condOp[]
-        Vec<String>, // condPattern[]
-        Vec<String>, // condReplace[]
-        Vec<String>, // condTargetType[]
-        Vec<String>, // condTargetValue[]
-    ),
-    Error,
-> {
+) -> Result<(
+    String,      // mode
+    Vec<u8>,     // file bytes
+    String,      // primary_key
+    Vec<String>, // condOp[]
+    Vec<String>, // condPattern[]
+    Vec<String>, // condReplace[]
+    Vec<String>, // condTargetType[]
+    Vec<String>, // condTargetValue[]
+), Error> {
     let mut mode = String::new();
     let mut data = Vec::new();
     let mut primary_key = String::new();
@@ -123,7 +121,7 @@ fn csv_to_json_with_primary_key(
                         *cell = out;
                     }
                 }
-            },
+            }
             "column" => if let Ok(n)=val.parse::<usize>() {
                 let idx = n.saturating_sub(1);
                 for row in &mut records {
@@ -137,7 +135,7 @@ fn csv_to_json_with_primary_key(
                         };
                     }
                 }
-            },
+            }
             "header" => if let Some(idx)=headers.iter().position(|h|h==val) {
                 for row in &mut records {
                     if idx<row.len() {
@@ -150,7 +148,7 @@ fn csv_to_json_with_primary_key(
                         };
                     }
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -187,7 +185,7 @@ fn csv_to_json_with_primary_key(
 fn json_to_csv(raw: &str) -> String {
     let v: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
     let arr = v.as_array().cloned().unwrap_or_default();
-    if arr.is_empty() { return String::new() }
+    if arr.is_empty() { return String::new(); }
     let headers: Vec<String> = arr[0].as_object().unwrap().keys().cloned().collect();
     let mut wtr = csv::Writer::from_writer(vec![]);
     wtr.write_record(&headers).ok();
@@ -268,9 +266,20 @@ async fn api_convert(mut payload: Multipart) -> Result<HttpResponse, Error> {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // ロガー初期化
     env_logger::init();
+
+    // PORT 環境変数 or デフォルト
+    let port: u16 = env::var("PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8080);
+    let host = "0.0.0.0";
+    info!("Server running at http://{}:{}", host, port);
+
+    // テンプレート読み込み (カレントディレクトリの templates フォルダ)
     let tera = Tera::new("templates/**/*").expect("テンプレート読み込み失敗");
-    info!("Server running at http://127.0.0.1:8080");
+
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
@@ -278,7 +287,7 @@ async fn main() -> std::io::Result<()> {
             .service(index)
             .service(api_convert)
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind((host, port))?
     .run()
     .await
 }
