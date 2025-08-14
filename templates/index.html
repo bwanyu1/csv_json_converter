@@ -117,6 +117,8 @@
       const downloadBtn    = document.getElementById('downloadBtn');
       const loadingOverlay = document.getElementById('loadingOverlay');
 
+      const modeSelect = document.querySelector('select[name="mode"]');
+
       let headerList = [], jsonKeyList = [];
 
       // ファイル選択→CSVヘッダー or JSONキー解析
@@ -208,11 +210,20 @@
       // ダウンロードボタン
       downloadBtn.addEventListener('click', () => {
         const text = outputPre.innerText;
-        const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
-        const url  = URL.createObjectURL(blob);
-        const a    = document.createElement('a');
-        a.href     = url; a.download = 'converted.json';
-        a.click(); URL.revokeObjectURL(url);
+        // Determine MIME type and extension based on mode
+        let mimeType = 'application/json;charset=utf-8';
+        let ext = '.json';
+        if (modeSelect.value === 'json2csv') {
+          mimeType = 'text/csv;charset=utf-8';
+          ext = '.csv';
+        }
+        const blob = new Blob([text], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'converted' + ext;
+        a.click();
+        URL.revokeObjectURL(url);
       });
 
       // フォーム送信
