@@ -209,7 +209,7 @@ fn json_to_csv(raw: &str) -> String {
     if arr.is_empty() { return String::new(); }
     // Determine headers as sorted keys
     let headers: Vec<String> = {
-        let mut set = std::collections::BTreeSet::new();
+        let mut set = BTreeSet::new();
         for item in &arr {
             if let Some(obj) = item.as_object() {
                 for key in obj.keys() {
