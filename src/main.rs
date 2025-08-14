@@ -1,3 +1,4 @@
+use std::env;
 use actix_multipart::Multipart;
 use actix_web::{get, post, web, App, Error, HttpResponse, HttpServer, Responder, middleware::Logger};
 use futures::StreamExt;
@@ -9,11 +10,17 @@ use chardetng::EncodingDetector;
 use encoding_rs::Encoding;
 use env_logger;
 use log::info;
-use std::collections::BTreeSet;
-use std::env;
+use actix_files::NamedFile;
+use actix_web::mime;
 
-/// バイト列を推定デコードして UTF-8 文字列に
-fn decode_to_utf8(bytes: &[u8]) -> String {
+#[derive(Clone)]
+struct AdsConfig {
+    client_id: String,
+    slot_top: String,
+    slot_bottom: String,
+}
+
+async fn decode_to_utf8(bytes: &[u8]) -> String {
     let mut det = EncodingDetector::new();
     det.feed(bytes, true);
     let enc: &'static Encoding = det.guess(None, true);
@@ -21,19 +28,13 @@ fn decode_to_utf8(bytes: &[u8]) -> String {
     cow.into_owned()
 }
 
-/// Multipart からフォーム値を取り出す
 async fn parse_multipart(
     payload: &mut Multipart,
 ) -> Result<
     (
-        String,      // mode
-        Vec<u8>,     // file bytes
-        String,      // primary_key
-        Vec<String>, // condOp[]
-        Vec<String>, // condPattern[]
-        Vec<String>, // condReplace[]
-        Vec<String>, // condTargetType[]
-        Vec<String>, // condTargetValue[]
+        String, Vec<u8>, String,
+        Vec<String>, Vec<String>, Vec<String>,
+        Vec<String>, Vec<String>,
     ),
     Error,
 > {
@@ -81,7 +82,7 @@ async fn parse_multipart(
     Ok((mode, data, primary_key, ops, patterns, replaces, targets, vals))
 }
 
-/// CSV→JSON：先に正規表現フィルタ→プライマリキーでマップ or 配列
+// CSV→JSON：先に正規表現フィルタ→プライマリキーでマップ or 配列
 fn csv_to_json_with_primary_key(
     raw: &str,
     primary_key: &str,
@@ -185,10 +186,9 @@ fn csv_to_json_with_primary_key(
     serde_json::to_string_pretty(&arr).unwrap_or_default()
 }
 
-/// JSON→CSV
+// JSON→CSV
 fn json_to_csv(raw: &str) -> String {
     let v: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
-    // Support both array and object JSON
     let arr: Vec<Value> = match v {
         Value::Array(a) => a,
         Value::Object(map) => {
@@ -207,9 +207,8 @@ fn json_to_csv(raw: &str) -> String {
         _ => return String::new(),
     };
     if arr.is_empty() { return String::new(); }
-    // Determine headers as sorted keys
     let headers: Vec<String> = {
-        let mut set = BTreeSet::new();
+        let mut set = std::collections::BTreeSet::new();
         for item in &arr {
             if let Some(obj) = item.as_object() {
                 for key in obj.keys() {
@@ -236,7 +235,7 @@ fn json_to_csv(raw: &str) -> String {
     String::from_utf8(wtr.into_inner().unwrap_or_default()).unwrap_or_default()
 }
 
-/// JSON→JSON キー指定フィルタ
+// JSON→JSON キー指定フィルタ
 fn apply_jsonkey_filters(
     raw: &str,
     ops: &[String],
@@ -275,52 +274,59 @@ fn apply_jsonkey_filters(
 }
 
 #[get("/")]
-async fn index(tmpl: web::Data<Tera>) -> impl Responder {
+async fn index(
+    tmpl: web::Data<Tera>,
+    ads: web::Data<AdsConfig>,
+) -> impl Responder {
     let mut ctx = Context::new();
     ctx.insert("mode", &"csv2json");
+    ctx.insert("adsense_client_id", &ads.client_id);
+    ctx.insert("adsense_slot_top", &ads.slot_top);
+    ctx.insert("adsense_slot_bottom", &ads.slot_bottom);
     let html = tmpl.render("index.html", &ctx).unwrap_or_else(|e| e.to_string());
     HttpResponse::Ok().content_type("text/html; charset=utf-8").body(html)
 }
 
 #[post("/api/convert")]
 async fn api_convert(mut payload: Multipart) -> Result<HttpResponse, Error> {
-    let (mode, data, primary_key, ops, pats, reps, tgts, vals) =
-        parse_multipart(&mut payload).await?;
-    let text = decode_to_utf8(&data);
-
+    let (mode, data, primary_key, ops, pats, reps, tgts, vals) = parse_multipart(&mut payload).await?;
+    let text = decode_to_utf8(&data).await;
     let result = match mode.as_str() {
-        "csv2json"  => csv_to_json_with_primary_key(&text, &primary_key, &ops, &pats, &reps, &tgts, &vals),
-        "json2csv"  => json_to_csv(&text),
+        "csv2json" => csv_to_json_with_primary_key(&text, &primary_key, &ops, &pats, &reps, &tgts, &vals),
+        "json2csv" => json_to_csv(&text),
         "json2json" => apply_jsonkey_filters(&text, &ops, &pats, &reps, &tgts, &vals),
-        _           => text,
+        _ => text,
     };
+    Ok(HttpResponse::Ok().content_type("application/json").body(json!({ "result": result }).to_string()))
+}
 
-    Ok(HttpResponse::Ok()
-        .content_type("application/json")
-        .body(json!({ "result": result }).to_string()))
+#[get("/ads.txt")]
+async fn ads_txt() -> Result<NamedFile, actix_web::Error> {
+    Ok(NamedFile::open("./static/ads.txt")?
+        .set_content_type(mime::TEXT_PLAIN))
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // Initialize logger
     env_logger::init();
-
-    // Determine host and port for Render compatibility
-    let port: u16 = env::var("PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8080);
+    let port: u16 = env::var("PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8080);
     let host = "0.0.0.0";
     info!("Server running at http://{}:{}", host, port);
 
-    // Load Tera templates
+    let ads = AdsConfig {
+        client_id: env::var("ADSENSE_CLIENT_ID").unwrap_or_else(|_| "ca-pub-XXXXXXXXXXXXXXX".into()),
+        slot_top: env::var("ADSENSE_SLOT_TOP").unwrap_or_else(|_| "1234567890".into()),
+        slot_bottom: env::var("ADSENSE_SLOT_BOTTOM").unwrap_or_else(|_| "0987654321".into()),
+    };
+
     let tera = Tera::new("templates/**/*").expect("テンプレート読み込み失敗");
 
-    // Start HTTP server
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
             .app_data(web::Data::new(tera.clone()))
+            .app_data(web::Data::new(ads.clone()))
+            .service(ads_txt)
             .service(index)
             .service(api_convert)
     })
