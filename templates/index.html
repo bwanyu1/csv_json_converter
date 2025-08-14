@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <title>CSV ⇔ JSON Converter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap"
+    rel="stylesheet"
+  />
+  <script src="https://cdn.jsdelivr.net/npm/encoding-japanese@2.0.0/encoding.min.js"></script>
+  <style>
+    body { font-family:'Noto Sans JP',sans-serif; padding:2rem; background:#f7f7f7; }
+    textarea, pre { font-family:monospace; }
+
+    #loadingOverlay {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      background:rgba(255,255,255,0.8);
+      display:none; align-items:center; justify-content:center; z-index:9999;
+    }
+    #resultCard { margin-top:1rem; display:none; }
+  </style>
+</head>
+<body>
+  <h1 class="mb-4">CSV ⇔ JSON Converter</h1>
+
+  <!-- ローディングオーバーレイ -->
+  <div id="loadingOverlay">
+    <div class="spinner-border text-primary" style="width:4rem;height:4rem;" role="status">
+      <span class="sr-only">Loading...</span>
+    </div>
+  </div>
+
+  <!-- メインフォーム -->
+  <form id="mainForm" enctype="multipart/form-data">
+    <div class="form-row align-items-end">
+      <div class="form-group col-md-4">
+        <label for="fileInput">ファイル (.csv/.json)</label>
+        <input type="file" class="form-control" id="fileInput" name="file" accept=".csv,.json" required>
+      </div>
+      <div class="form-group col-md-2">
+        <label>モード</label>
+        <select name="mode" class="form-control">
+          <option value="csv2json">CSV→JSON</option>
+          <option value="json2csv">JSON→CSV</option>
+          <option value="json2json">JSON→JSON</option>
+        </select>
+      </div>
+      <div class="form-group col-md-3">
+        <label for="primaryKey">プライマリキー（空欄で配列形式）</label>
+        <select id="primaryKey" name="primaryKey" class="form-control">
+          <option value="">なし</option>
+        </select>
+      </div>
+      <div class="form-group col-md-3 text-right">
+        <button type="submit" class="btn btn-primary w-100">変換</button>
+      </div>
+    </div>
+
+    <div class="card p-3 mb-4">
+      <h5>正規表現条件</h5>
+      <div id="conditions">
+        <div class="condition-block form-row align-items-center mb-2">
+          <div class="col-2">
+            <select class="form-control opType">
+              <option value="extract">抽出</option>
+              <option value="replace">置換</option>
+              <option value="split">分割</option>
+            </select>
+          </div>
+          <div class="col-3">
+            <input type="text" class="form-control patternInput" placeholder="パターン">
+          </div>
+          <div class="col-3">
+            <input type="text" class="form-control replaceInput" placeholder="置換後" style="display:none;">
+          </div>
+          <div class="col-2">
+            <select class="form-control targetType">
+              <option value="all">全行</option>
+              <option value="column">列番号</option>
+              <option value="header">ヘッダー名</option>
+              <option value="jsonKey">JSONキー</option>
+            </select>
+          </div>
+          <div class="col-2">
+            <input type="text" class="form-control targetValue" placeholder="" style="display:none;">
+          </div>
+        </div>
+      </div>
+      <button type="button" id="addCondition" class="btn btn-outline-secondary">条件を追加</button>
+    </div>
+  </form>
+
+  <!-- 結果表示カード -->
+  <div id="resultCard" class="card mb-4">
+    <div class="card-body">
+      <h5 class="card-title">変換結果プレビュー</h5>
+      <pre id="outputPre" class="border p-3" style="white-space: pre-wrap; overflow:auto; height:300px;"></pre>
+    </div>
+    <div class="card-footer text-right">
+      <button id="downloadBtn" class="btn btn-success">ダウンロード</button>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const fileInput      = document.getElementById('fileInput');
+      const primaryKeySel  = document.getElementById('primaryKey');
+      const conditionsEl   = document.getElementById('conditions');
+      const form           = document.getElementById('mainForm');
+      const resultCard     = document.getElementById('resultCard');
+      const outputPre      = document.getElementById('outputPre');
+      const downloadBtn    = document.getElementById('downloadBtn');
+      const loadingOverlay = document.getElementById('loadingOverlay');
+
+      let headerList = [], jsonKeyList = [];
+
+      // ファイル選択→CSVヘッダー or JSONキー解析
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const arr = new Uint8Array(reader.result);
+          const enc = Encoding.detect(arr);
+          const uni = Encoding.convert(arr, { to:'UNICODE', from:enc });
+          const str = Encoding.codeToString(uni);
+
+          if (/\.csv$/i.test(file.name)) {
+            headerList  = (str.split(/\r?\n/)[0]||'').split(',');
+            jsonKeyList = [];
+          } else {
+            try {
+              const v = JSON.parse(str);
+              if (Array.isArray(v) && v[0] && typeof v[0]==='object') {
+                jsonKeyList = Object.keys(v[0]);
+              } else if (v && typeof v==='object') {
+                jsonKeyList = Object.keys(v);
+              } else {
+                jsonKeyList = [];
+              }
+            } catch {
+              jsonKeyList = [];
+            }
+            headerList = [];
+          }
+
+          primaryKeySel.innerHTML = '<option value="">なし</option>';
+          const keys = headerList.length ? headerList : jsonKeyList;
+          keys.forEach(k => {
+            const o = document.createElement('option');
+            o.value = k; o.textContent = k;
+            primaryKeySel.appendChild(o);
+          });
+
+          document.querySelectorAll('.condition-block').forEach(bindCondition);
+        };
+        reader.readAsArrayBuffer(file);
+      });
+
+      // 正規表現条件バインド
+      function bindCondition(block) {
+        const opSel = block.querySelector('.opType');
+        const rep   = block.querySelector('.replaceInput');
+        const tgt   = block.querySelector('.targetType');
+        const valIn = block.querySelector('.targetValue');
+
+        opSel.addEventListener('change', () => {
+          rep.style.display = opSel.value === 'replace' ? '' : 'none';
+        });
+        tgt.addEventListener('change', () => {
+          valIn.style.display = 'none';
+          const type = tgt.value;
+          if (type === 'all') return;
+          if (type === 'column') {
+            valIn.outerHTML = '<input type="number" min="1" class="form-control targetValue" placeholder="列番号(1始まり)">';
+          } else if (type === 'header') {
+            const sel = document.createElement('select');
+            sel.className = 'form-control targetValue';
+            sel.innerHTML = '<option value="">選択</option>' + headerList.map(h=>`<option>${h}</option>`).join('');
+            valIn.replaceWith(sel);
+          } else if (type === 'jsonKey') {
+            const sel = document.createElement('select');
+            sel.className = 'form-control targetValue';
+            sel.innerHTML = '<option value="">選択</option>' + jsonKeyList.map(k=>`<option>${k}</option>`).join('');
+            valIn.replaceWith(sel);
+          }
+          block.querySelector('.targetValue').style.display = '';
+        });
+      }
+
+      document.querySelectorAll('.condition-block').forEach(bindCondition);
+      document.getElementById('addCondition').addEventListener('click', () => {
+        const tpl   = conditionsEl.querySelector('.condition-block');
+        const clone = tpl.cloneNode(true);
+        clone.querySelectorAll('input').forEach(i => {
+          if (!i.classList.contains('targetValue')) i.value = '';
+        });
+        clone.querySelector('.replaceInput').style.display = 'none';
+        bindCondition(clone);
+        conditionsEl.appendChild(clone);
+      });
+
+      // ダウンロードボタン
+      downloadBtn.addEventListener('click', () => {
+        const text = outputPre.innerText;
+        const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url; a.download = 'converted.json';
+        a.click(); URL.revokeObjectURL(url);
+      });
+
+      // フォーム送信
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        loadingOverlay.style.display = 'flex';
+        resultCard.style.display     = 'none';
+
+        form.querySelectorAll('input[name^="cond"]').forEach(i => i.remove());
+        document.querySelectorAll('.condition-block').forEach(block => {
+          ['Op','Pattern','Replace','TargetType','TargetValue'].forEach(key => {
+            const inp = document.createElement('input');
+            inp.type = 'hidden';
+            inp.name = `cond${key}[]`;
+            const selMap = {
+              Op: '.opType',
+              Pattern: '.patternInput',
+              Replace: '.replaceInput',
+              TargetType: '.targetType',
+              TargetValue: '.targetValue'
+            };
+            const el = block.querySelector(selMap[key]);
+            inp.value = el ? el.value : '';
+            form.appendChild(inp);
+          });
+        });
+
+        try {
+          const fd  = new FormData(form);
+          const res = await fetch('/api/convert', { method:'POST', body:fd });
+          if (!res.ok) throw new Error(res.statusText);
+          const { result } = await res.json();
+
+          let pretty;
+          try {
+            pretty = JSON.stringify(JSON.parse(result), null, 2);
+          } catch {
+            pretty = result;
+          }
+          outputPre.innerText = pretty;
+          resultCard.style.display = 'block';
+        } catch (err) {
+          alert('変換エラー: ' + err.message);
+        } finally {
+          loadingOverlay.style.display = 'none';
+        }
+      });
+    });
+  </script>
+</body>
+</html>

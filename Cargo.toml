@@ -1,0 +1,33 @@
+[package]
+name = "csv_converter"
+version = "0.1.0"
+edition = "2021"
+authors = ["あなたの名前 <you@example.com>"]
+description = "WebベースのCSV⇔JSONコンバーター with 正規表現フィルタ"
+license = "MIT"
+
+[dependencies]
+# Web フレームワーク
+actix-web        = "4"
+actix-multipart  = "0.4"
+# テンプレートエンジン
+tera             = "1.20"
+# CSV 入出力
+csv              = "1.2"
+# JSON 処理
+serde            = { version = "1.0", features = ["derive"] }
+serde_json       = "1.0"
+# 正規表現
+regex            = "1"
+# エンコーディング検出・変換
+chardetng        = "0.1"
+encoding_rs      = "0.8"
+# ロギング
+env_logger       = "0.10"
+log              = "0.4"
+# 非同期ストリーム
+futures          = "0.3"
+
+[dev-dependencies]
+# 自動リロード等、開発時の補助に
+cargo-watch      = "8.1"
