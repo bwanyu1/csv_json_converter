@@ -307,6 +307,12 @@ async fn ads_txt() -> Result<NamedFile, actix_web::Error> {
         .set_content_type(mime::TEXT_PLAIN))
 }
 
+#[get("/robots.txt")]
+async fn robots_txt() -> Result<NamedFile, actix_web::Error> {
+    Ok(NamedFile::open("./static/robots.txt")?
+        .set_content_type(mime::TEXT_PLAIN))
+}
+
 #[get("/sitemap.xml")]
 async fn sitemap() -> Result<NamedFile, actix_web::Error> {
     Ok(NamedFile::open("./static/sitemap.xml")?
@@ -334,6 +340,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(tera.clone()))
             .app_data(web::Data::new(ads.clone()))
             .service(ads_txt)
+            .service(robots_txt)
             .service(sitemap)
             .service(index)
             .service(api_convert)
