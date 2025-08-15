@@ -1,0 +1,9 @@
+# クローラー全般に対して
+User-agent: *
+# このパス以下はクロール禁止
+Disallow: /admin/
+# その他の全ページは許可
+Allow: /
+
+# サイトマップの場所も明示
+Sitemap: https://csv-json-converter-5jfd.onrender.com/sitemap.xml
