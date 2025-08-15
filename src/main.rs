@@ -300,10 +300,17 @@ async fn api_convert(mut payload: Multipart) -> Result<HttpResponse, Error> {
     Ok(HttpResponse::Ok().content_type("application/json").body(json!({ "result": result }).to_string()))
 }
 
+
 #[get("/ads.txt")]
 async fn ads_txt() -> Result<NamedFile, actix_web::Error> {
     Ok(NamedFile::open("./static/ads.txt")?
         .set_content_type(mime::TEXT_PLAIN))
+}
+
+#[get("/sitemap.xml")]
+async fn sitemap() -> Result<NamedFile, actix_web::Error> {
+    Ok(NamedFile::open("./static/sitemap.xml")?
+        .set_content_type(mime::TEXT_XML))
 }
 
 #[actix_web::main]
@@ -327,6 +334,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(tera.clone()))
             .app_data(web::Data::new(ads.clone()))
             .service(ads_txt)
+            .service(sitemap)
             .service(index)
             .service(api_convert)
     })
